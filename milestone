@@ -1,0 +1,74 @@
+#!/usr/bin/env ruby
+require_relative 'lib/environment'
+
+class MilestoneCLI < Thor
+  desc 'validate', 'validate monthly milestone'
+  method_option :project_id, type: :string, required: true
+  def validate
+    project_ids.each { |id| validate_single(id) }
+  end
+
+  desc 'rotate', 'rotate monthly milestone'
+  method_option :project_id, type: :string, required: true
+  def rotate
+    project_ids.each { |id| rotate_single(id) }
+  end
+
+  private
+
+  def validate_single(project_id)
+    puts "# #{project_id}"
+
+    gitlab.milestones(CGI.escape(project_id)).each do |m|
+      month = parse_yyyy_mm(m.title)
+      unless month
+        puts "ignore: #{m.title}"
+        next
+      end
+
+      due_date = Date.parse(m.due_date) if m.due_date
+      expected_due_date = end_of_month(month)
+      if due_date != expected_due_date
+        puts "#{m.title}: #{due_date} => #{expected_due_date}"
+        gitlab.edit_milestone(m.project_id, m.id, due_date: expected_due_date)
+      end
+    end
+  end
+
+  def rotate_single(project_id)
+    puts "# #{project_id}"
+
+    today = Date.today
+    title = today.strftime('%Y-%m')
+    due_date = end_of_month(today)
+
+    found = gitlab.milestones(CGI.escape(project_id)).find { |m| m.title == title }
+    if found
+      puts "found #{title}"
+    else
+      puts "create #{title}"
+      gitlab.create_milestone(CGI.escape(project_id), title, due_date: due_date)
+    end
+  end
+
+  def project_ids
+    options[:project_id].split(',')
+  end
+
+  def parse_yyyy_mm(str)
+    return unless str =~ /^\d{4}-[0-1]\d$/
+    Date.strptime(str, '%Y-%m')
+  rescue ArgumentError
+    nil
+  end
+
+  def end_of_month(d)
+    Date.civil(d.year, d.month, -1)
+  end
+
+  def gitlab
+    @gitlab ||= Gitlab.client
+  end
+end
+
+MilestoneCLI.start
